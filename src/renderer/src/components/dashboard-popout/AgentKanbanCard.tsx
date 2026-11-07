@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronRight,
@@ -14,6 +14,7 @@ import { AgentStateDot } from '@/components/AgentStateDot'
 import { RepoIconGlyph } from '@/components/repo/repo-icon'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { isMacUserAgent } from '@/lib/user-agent-platform'
 import {
   dashboardCardDisplayState,
   type DashboardCard
@@ -21,6 +22,14 @@ import {
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { translate } from '@/i18n/i18n'
 import { DashboardHostBadge } from './DashboardHostBadge'
+
+/** Cmd+Click on macOS, Ctrl+Click elsewhere, matching the platform's open-directly modifier. */
+function hasOpenDirectlyModifier(event: React.MouseEvent): boolean {
+  return isMacUserAgent() ? event.metaKey : event.ctrlKey
+}
+
+/** Why: a single click waits this long so a double click can open the worktree without flashing the preview dialog. */
+export const CARD_DOUBLE_CLICK_DELAY_MS = 250
 
 function formatStartedAgo(startedAt: number, now: number): string {
   const seconds = Math.max(0, Math.floor((now - startedAt) / 1000))
@@ -189,6 +198,8 @@ type AgentKanbanCardProps = {
   now: number
   /** Host dialogs on the board because bucket moves remount cards and would close an embedded conversation. */
   onOpenTerminal: (card: DashboardCard) => void
+  /** Double click or Cmd/Ctrl+Click skips the preview and focuses the agent's worktree directly. */
+  onOpenWorktree: (card: DashboardCard) => void
 }
 
 export const AgentKanbanCard = memo(
@@ -196,10 +207,44 @@ export const AgentKanbanCard = memo(
     card,
     repoIcon = null,
     now,
-    onOpenTerminal
+    onOpenTerminal,
+    onOpenWorktree
   }: AgentKanbanCardProps): React.JSX.Element {
     useTranslation()
     const [subagentsOpen, setSubagentsOpen] = useState(false)
+    const singleClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const cancelSingleClick = (): void => {
+      if (singleClickTimer.current !== null) {
+        clearTimeout(singleClickTimer.current)
+        singleClickTimer.current = null
+      }
+    }
+    useEffect(() => cancelSingleClick, [])
+    const handleOpenClick = (event: React.MouseEvent<HTMLButtonElement>): void => {
+      if (hasOpenDirectlyModifier(event)) {
+        cancelSingleClick()
+        onOpenWorktree(card)
+        return
+      }
+      // Why: keyboard activation reports detail 0 and has no double click to wait for.
+      if (event.detail === 0) {
+        onOpenTerminal(card)
+        return
+      }
+      // The second click of a double click is handled by onDoubleClick.
+      if (event.detail > 1) {
+        return
+      }
+      cancelSingleClick()
+      singleClickTimer.current = setTimeout(() => {
+        singleClickTimer.current = null
+        onOpenTerminal(card)
+      }, CARD_DOUBLE_CLICK_DELAY_MS)
+    }
+    const handleOpenDoubleClick = (): void => {
+      cancelSingleClick()
+      onOpenWorktree(card)
+    }
     // Tint only attention and done so scan-worthy outcomes retain distinct meaning.
     const needsYou = card.bucket === 'attention'
     const displayState = dashboardCardDisplayState(card)
@@ -223,7 +268,8 @@ export const AgentKanbanCard = memo(
       >
         <button
           type="button"
-          onClick={() => onOpenTerminal(card)}
+          onClick={handleOpenClick}
+          onDoubleClick={handleOpenDoubleClick}
           className="flex w-full flex-col gap-1.5 text-left focus-visible:rounded-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <div className="flex w-full items-center gap-1.5">
@@ -306,7 +352,8 @@ export const AgentKanbanCard = memo(
 
         <button
           type="button"
-          onClick={() => onOpenTerminal(card)}
+          onClick={handleOpenClick}
+          onDoubleClick={handleOpenDoubleClick}
           className="flex w-full items-center gap-2 rounded-md text-left text-[11px] text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <Tooltip>
@@ -341,6 +388,7 @@ export const AgentKanbanCard = memo(
   },
   (previous, next) =>
     previous.onOpenTerminal === next.onOpenTerminal &&
+    previous.onOpenWorktree === next.onOpenWorktree &&
     sameCard(previous.card, next.card) &&
     sameRepoIcon(previous.repoIcon, next.repoIcon) &&
     (displayTimestamp(previous.card) <= 0 ||

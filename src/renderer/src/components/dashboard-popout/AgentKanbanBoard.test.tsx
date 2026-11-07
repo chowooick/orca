@@ -18,12 +18,14 @@ vi.mock('./AgentKanbanCard', () => ({
     card,
     repoIcon,
     now,
-    onOpenTerminal
+    onOpenTerminal,
+    onOpenWorktree
   }: {
     card: DashboardCard
     repoIcon?: RepoIcon | null
     now: number
     onOpenTerminal: (card: DashboardCard) => void
+    onOpenWorktree: (card: DashboardCard) => void
   }) => (
     <div
       data-testid="card"
@@ -32,6 +34,7 @@ vi.mock('./AgentKanbanCard', () => ({
       data-now={now}
       data-repo-icon={repoIcon === null ? 'none' : JSON.stringify(repoIcon)}
       onClick={() => onOpenTerminal(card)}
+      onDoubleClick={() => onOpenWorktree(card)}
     >
       {card.worktreeName}
     </div>
@@ -152,5 +155,36 @@ describe('AgentKanbanBoard', () => {
     rerender(<AgentKanbanBoard snapshot={{ generatedAt: 3, cards: [] }} />)
     expect(screen.getByTestId('terminal-dialog').dataset.open).toBe('true')
     expect(screen.getByTestId('terminal-dialog').dataset.ptyId).toBeUndefined()
+  })
+
+  it('opens the worktree directly on double click without opening the dialog', () => {
+    const agent = card({
+      paneKey: 'pk-2',
+      bucket: 'done',
+      worktreeId: 'w9',
+      tabId: 't9',
+      leafId: 'l9'
+    })
+    const onRevealAgent = vi.fn()
+    const onAck = vi.fn()
+    render(
+      <AgentKanbanBoard
+        snapshot={{ generatedAt: 1, cards: [agent], showIdle: true }}
+        onRevealAgent={onRevealAgent}
+        onAckAgent={onAck}
+      />
+    )
+
+    fireEvent.doubleClick(screen.getByTestId('card'))
+
+    expect(onRevealAgent).toHaveBeenCalledWith({
+      repoId: 'r1',
+      worktreeId: 'w9',
+      executionHostId: undefined,
+      tabId: 't9',
+      leafId: 'l9'
+    })
+    expect(onAck).toHaveBeenCalledWith('pk-2', 'explicit')
+    expect(screen.getByTestId('terminal-dialog').dataset.open).toBe('false')
   })
 })
